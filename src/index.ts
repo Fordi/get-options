@@ -41,15 +41,15 @@ const getArgNames = (fn) => {
 const { stderr, exit } = process;
 
 function getOptions<T>({
-  naked = [],
+  positional = [],
   allowExtra = false,
   description,
   validate,
   footer,
-  cmd = relative(process.cwd(), process.argv[1]),
+  command = relative(process.cwd(), process.argv[1]),
   ...specification
 }: OptionsSpec<T>): GetOptions<T> {
-  if (cmd === '') cmd = '.';
+  if (command === '') command = '.';
 
   const usage = async () => {
     const flags = Object.keys(spec).map((f) => {
@@ -68,7 +68,11 @@ function getOptions<T>({
       return rep;
     }).join(' ');
 
-    const nakedArgs = naked.length ? `{${naked.join('} {')}}` : '';
+    const nakedArgs = positional.map((p) => {
+      if (typeof p === 'string') return `{${p}}`;
+      const argNames = getArgNames(p.trigger);
+      return `{${p.name} ${argNames.join(' ')}}`;
+    }).join(' ')
     let flagMax = 0;
     const flagStrs = {};
     Object.keys(spec).forEach((f) => {
@@ -76,14 +80,24 @@ function getOptions<T>({
       flagStrs[f] = `-${f}${s.long ? ` | --${s.long}` : ''}`;
       flagMax = Math.max(flagMax, flagStrs[f].length);
     });
+    for (const p of positional) {
+      if (typeof p !== 'string') {
+        flagMax = Math.max(flagMax, p.name.length);
+      }
+    }
     const descs = Object.keys(spec).map((f) => {
       const flag = flagStrs[f].padEnd(flagMax);
       return `  ${flag}\t${spec[f].required ? '(required) ' : ''}${spec[f].description || ''}`;
     });
+    for (const p of positional) {
+      if (typeof p !== 'string') {
+        descs.push(`  ${p.name.padEnd(flagMax)}\t${p.description || ''}`);
+      }
+    }
     stderr.write([
       (await (typeof description === 'function' ? description() : description)) || '',
       '',
-      `Usage: node ${cmd} ${flags} ${nakedArgs}`,
+      `Usage: node ${command} ${flags} ${nakedArgs}`,
       ...descs,
       '',
     ].join('\n'));
@@ -93,7 +107,7 @@ function getOptions<T>({
   };
   
   const process = async (args: string[]) => {
-    const nakedArgs = [...naked];
+    const posArgs = [...positional];
     const options = {} as Options<T>;
     if (allowExtra) {
       options.extra = [];
@@ -110,8 +124,7 @@ function getOptions<T>({
         const s = spec[f];
         if (arg === `-${f}` || (s.long && arg === `--${s.long}`)) {
           got = true;
-          const argNames = getArgNames(s.trigger);
-          const needed = argNames.length;
+          const needed = s.trigger.length;
           const available = args.length - index - 1;
           if (available < needed) {
             throw new Error(`Option -${s.long || f} requires ${needed} args, ${available} given.`);
@@ -122,8 +135,21 @@ function getOptions<T>({
         }
       }
       if (!got) {
-        if (nakedArgs.length) {
-          options[nakedArgs.shift()] = arg;
+        if (posArgs.length) {
+          const posSpec = posArgs.shift();
+          if (typeof posSpec === 'string') {
+            options[posSpec] = arg;
+          } else {
+            const needed = posSpec.trigger.length;
+            const available = args.length - index - 1;
+            const delta = needed - available;
+            if (delta > 0) {
+              throw new Error(`Expected ${delta} more arg${delta > 1 ? 's' : ''}`);
+            }
+            const params = args.slice(index + 1, index + 1 + needed);
+            index += needed;
+            merge(options, await posSpec.trigger(...params) || {});
+          }
         } else if (allowExtra) {
           options.extra.push(arg);
         } else {
@@ -131,31 +157,36 @@ function getOptions<T>({
         }
       }
     }
-    if (nakedArgs.length) {
-      throw new Error(`Expected required arguments ${nakedArgs.join(' ')}.`);
+    if (posArgs.length) {
+      throw new Error(`Expected required arguments ${posArgs.join(' ')}.`);
     }
     return options;
   };
 
   const spec = {
     ...specification,
-    h: {
+  };
+  if (!spec.h) {
+    spec.h = {
+      name: 'help',
       description: 'This help message',
-      long: 'help',
       trigger: async () => {
         await usage();
         exit(0);
       },
-    },
-  };
+    };
+  }
 
   const read = async (argv: string[]): Promise<Options<T>> => {
     try {
       const options = await process(argv);
       if (validate) {
-        await validate(options);
+        const valid = await validate(options);
+        if (valid) {
+          merge(options, valid);
+        }
       }
-      return options as Options<T>;
+      return options;
     } catch (e) {
       stderr.write(`${e.message}\n`);
       await usage();
