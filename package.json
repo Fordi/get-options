@@ -1,0 +1,20 @@
+{
+  "name": "@fordi-org/get-options",
+  "version": "1.0.0",
+  "description": "Quick lib to grab command line options",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "author": "Bryan Elliott <ook@codemonkeybryan.com>",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^18.8.4",
+    "eslint": "^6.8.0",
+    "eslint-config-recommended": "^4.1.0",
+    "eslint-import-resolver-typescript": "^3.5.1",
+    "eslint-plugin-import": "^2.26.0"
+  }
+}
